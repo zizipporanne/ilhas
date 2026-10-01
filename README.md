@@ -1,6 +1,6 @@
 # 🏝️ Ilhas
 
-Um projeto interativo web construído com Vite e Three.js para renderização de mapas, shaders e visualização 3D.
+Um projeto interativo web __da região de Florianópolis, construído com Vite e Three.js para renderização de mapas, shaders e visualização 3D.
 
 ---
 
