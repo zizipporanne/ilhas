@@ -1,462 +1,242 @@
-import * as THREE from 'three';
-
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-
-import { PixelShader } from './utils/pixelShader.js';
-
-import {
-    createTerrain,
-    setElevationData
-} from './utils/terrain.js';
-
-import { createPOIs } from './utils/points.js';
 import { loadElevationData } from './utils/elevationLoader.js';
 
-import {
-    loadHydrography,
-    initProjection,
-    onHydrographyResize
-} from './utils/hydrography.js';
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
 
-import { loadBuildings } from './utils/buildings.js';
-import { createSky } from './utils/sky.js';
-import { createWater } from './utils/water.js';
-import { createVegetation } from './utils/vegetation.js';
+// O protótipo continua lightweight, mas agora usa o DEM real como referência.
+// A cena abre dentro da área do terreno real, ajustando player.x/player.y ao centro
+// do bbox do TIFF e usando a elevação real para o nível do chão.
+const map = [
+  '1111111111111111',
+  '1100000000000011',
+  '1100110011000011',
+  '1100100001000011',
+  '1100100111000011',
+  '1100000000000011',
+  '1100011111000011',
+  '1100010001000011',
+  '1100010001000011',
+  '1100011111000011',
+  '1100000000000011',
+  '1100110110000011',
+  '1100100100000011',
+  '1100000000000011',
+  '1111111111111111'
+];
 
+const sprites = [
+  { x: 4.8, y: 5.5, color: '#5fae5a' },
+  { x: 6.5, y: 4.0, color: '#6fbf6b' },
+  { x: 10.2, y: 5.4, color: '#5bbd62' },
+  { x: 11.1, y: 10.8, color: '#78d57c' },
+  { x: 8.5, y: 11.9, color: '#69c56f' },
+  { x: 3.5, y: 10.4, color: '#5ead5e' }
+];
 
-// =============================================
-// CENA E RENDERIZADOR
-// =============================================
+const DEM_FILE = '/V4_1_-48.48_-27.59.tif';
+const terrainWorld = {
+  bbox: null,
+  width: 15,
+  depth: 15,
+  sample: null,
+  center: { x: 0, y: 0 }
+};
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xb8c4d0);
+const player = {
+  x: 7.5,
+  y: 7.5,
+  angle: -0.7,
+  speed: 1.7,
+  turn: 1.5,
+  groundHeight: 0
+};
 
-const camera = new THREE.PerspectiveCamera(
-    45,
-    window.innerWidth / window.innerHeight,
-    0.5,
-    2500
-);
-camera.position.set(8, 10, 12);
+async function bindToTerrainData() {
+  const sample = await loadElevationData(DEM_FILE);
+  if (!sample || !sample.bbox) return;
 
-const renderer = new THREE.WebGLRenderer({ antialias: false });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-document.body.appendChild(renderer.domElement);
+  terrainWorld.bbox = sample.bbox;
+  terrainWorld.sample = sample;
 
+  const minX = sample.bbox[0];
+  const maxX = sample.bbox[2];
+  const minY = sample.bbox[1];
+  const maxY = sample.bbox[3];
 
-// =============================================
-// PÓS-PROCESSAMENTO
-// =============================================
+  const centerUtmX = (minX + maxX) / 2;
+  const centerUtmY = (minY + maxY) / 2;
 
-const composer = new EffectComposer(renderer);
-const renderPass = new RenderPass(scene, camera);
-composer.addPass(renderPass);
+  terrainWorld.center = {
+    x: (centerUtmX - minX) / (maxX - minX) * terrainWorld.width,
+    y: (centerUtmY - minY) / (maxY - minY) * terrainWorld.depth
+  };
 
-const retroPass = new ShaderPass(PixelShader);
-retroPass.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
-retroPass.uniforms.pixelSize.value = 2.0;
-retroPass.uniforms.colorDepth.value = 22.0;
-retroPass.uniforms.outlineStrength.value = 0.45;
-retroPass.enabled = true;
-composer.addPass(retroPass);
-
-
-// =============================================
-// ESTADO DA CENA
-// =============================================
-
-let sky = null;
-let pois = [];
-let water = null;
-let hydrography = null;
-let vegetation = null;
-let elevationData = null;
-
-const waterLevelInicial = 10;
-const SCALE_FACTOR = 0.003;
-
-let retroAtivo = true;
-let hidrografiaAtiva = true;
-let vegetacaoAtiva = true;
-
-
-// =============================================
-// BOTÕES DA INTERFACE
-// =============================================
-
-const toggleRetroButton = document.getElementById('toggle-retro-icon');
-const toggleHydroButton = document.getElementById('toggle-hidrografia');
-const toggleVegetationButton = document.getElementById('toggle-vegetacao');
-const toggleUIButton = document.getElementById('toggle-ui');
-
-function atualizarEstadoBotao(botao, ativo) {
-    if (!botao) return;
-    botao.classList.toggle('active', ativo);
-    botao.classList.toggle('off', !ativo);
-    botao.setAttribute('aria-pressed', String(ativo));
+  player.x = terrainWorld.center.x;
+  player.y = terrainWorld.center.y;
+  player.groundHeight = sample.getHeight(player.x, player.y, terrainWorld.width, terrainWorld.depth);
 }
 
-function alternarRetro() {
-    retroAtivo = !retroAtivo;
-    retroPass.enabled = retroAtivo;
-    atualizarEstadoBotao(toggleRetroButton, retroAtivo);
+function currentGroundHeight() {
+  if (!terrainWorld.sample) return 0;
+  return terrainWorld.sample.getHeight(player.x, player.y, terrainWorld.width, terrainWorld.depth);
 }
 
-function alternarHidrografia() {
-    hidrografiaAtiva = !hidrografiaAtiva;
-    if (hydrography) hydrography.visible = hidrografiaAtiva;
-    atualizarEstadoBotao(toggleHydroButton, hidrografiaAtiva);
+const keys = {};
+const MAX_DEPTH = 18;
+
+function resizeCanvas() {
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.floor(window.innerWidth * ratio);
+  const height = Math.floor(window.innerHeight * ratio);
+  canvas.width = width;
+  canvas.height = height;
+  canvas.style.width = `${window.innerWidth}px`;
+  canvas.style.height = `${window.innerHeight}px`;
 }
 
-function alternarVegetacao() {
-    vegetacaoAtiva = !vegetacaoAtiva;
-    if (vegetation) vegetation.visible = vegetacaoAtiva;
-    atualizarEstadoBotao(toggleVegetationButton, vegetacaoAtiva);
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
-function alternarInterface() {
-    document.body.classList.toggle('ui-hidden');
+function getCell(x, y) {
+  const mapWidth = map[0].length;
+  const mapHeight = map.length;
+  if (x < 0 || y < 0 || x >= mapWidth || y >= mapHeight) return 1;
+  return map[Math.floor(y)][Math.floor(x)] === '1' ? 1 : 0;
 }
 
-toggleRetroButton?.addEventListener('click', alternarRetro);
-toggleHydroButton?.addEventListener('click', alternarHidrografia);
-toggleVegetationButton?.addEventListener('click', alternarVegetacao);
-toggleUIButton?.addEventListener('click', alternarInterface);
+function castRay(angle) {
+  const sin = Math.sin(angle);
+  const cos = Math.cos(angle);
+  let distance = 0;
+  const step = 0.02;
 
-atualizarEstadoBotao(toggleRetroButton, retroAtivo);
-atualizarEstadoBotao(toggleHydroButton, hidrografiaAtiva);
-atualizarEstadoBotao(toggleVegetationButton, vegetacaoAtiva);
-
-
-// =============================================
-// CÉU, CONTROLES E LUZES
-// =============================================
-
-try {
-    sky = createSky();
-    if (sky) scene.add(sky);
-} catch (error) {
-    console.error('Erro ao criar céu:', error);
+  while (distance < MAX_DEPTH) {
+    const x = player.x + cos * distance;
+    const y = player.y + sin * distance;
+    if (getCell(x, y) === 1) {
+      return distance;
+    }
+    distance += step;
+  }
+  return MAX_DEPTH;
 }
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0, 0);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.maxPolarAngle = Math.PI / 2 - 0.05;
-controls.minPolarAngle = 0.05;
-controls.minDistance = 1.5;
-controls.maxDistance = 50.0;
+function drawBackground() {
+  const { width, height } = canvas;
+  const sky = ctx.createLinearGradient(0, 0, 0, height * 0.5);
+  sky.addColorStop(0, '#2b3a52');
+  sky.addColorStop(1, '#0d1724');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, width, height * 0.5);
 
-const BOUNDS_X = 4.5;
-const BOUNDS_Z = 4.5;
+  const groundHeightValue = currentGroundHeight();
+  const floorTint = clamp((groundHeightValue + 20) / 120, 0, 1);
+  const floor = ctx.createLinearGradient(0, height * 0.5, 0, height);
+  floor.addColorStop(0, `rgb(${Math.floor(45 + floorTint * 20)}, ${Math.floor(45 + floorTint * 70)}, ${Math.floor(35 + floorTint * 25)})`);
+  floor.addColorStop(1, '#111111');
+  ctx.fillStyle = floor;
+  ctx.fillRect(0, height * 0.5, width, height * 0.5);
+}
 
-controls.addEventListener('change', () => {
-    controls.target.x = Math.max(-BOUNDS_X, Math.min(BOUNDS_X, controls.target.x));
-    controls.target.z = Math.max(-BOUNDS_Z, Math.min(BOUNDS_Z, controls.target.z));
-    controls.target.y = Math.max(-0.5, Math.min(3.0, controls.target.y));
+function drawWallColumn(columnX, distance) {
+  const { width, height } = canvas;
+  const wallHeight = Math.min(height * 1.2, (height / Math.max(distance, 0.1)) * 0.9);
+  const wallTop = (height - wallHeight) * 0.5;
+  const brightness = clamp(1 - distance / MAX_DEPTH, 0.15, 1);
+  const shade = Math.floor(200 * brightness);
+  ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+  ctx.fillRect(columnX, wallTop, 1, wallHeight);
+}
+
+function drawSprites() {
+  const { width, height } = canvas;
+  for (const sprite of sprites) {
+    const dx = sprite.x - player.x;
+    const dy = sprite.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= 0.1) continue;
+    const spriteAngle = Math.atan2(dy, dx) - player.angle;
+    const normalized = Math.atan2(Math.sin(spriteAngle), Math.cos(spriteAngle));
+    if (Math.abs(normalized) > 0.9) continue;
+    const screenX = (normalized + Math.PI / 6) / (Math.PI / 3) * width;
+    const spriteSize = clamp((height / dist) * 0.7, 8, 80);
+    const spriteY = height * 0.65;
+    ctx.fillStyle = sprite.color;
+    ctx.fillRect(screenX - spriteSize * 0.35, spriteY - spriteSize, spriteSize * 0.7, spriteSize);
+  }
+}
+
+function render() {
+  drawBackground();
+  const { width, height } = canvas;
+  const fov = Math.PI / 3;
+  const rayStep = fov / width;
+
+  // Fixa o nível do chão pelo DEM real para manter a cena "amarrada" ao terreno.
+  const heightFromTerrain = currentGroundHeight();
+  player.groundHeight = heightFromTerrain;
+
+  for (let x = 0; x < width; x++) {
+    const rayAngle = player.angle - fov / 2 + x * rayStep;
+    const dist = castRay(rayAngle);
+    drawWallColumn(x, dist);
+  }
+  drawSprites();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillRect(width * 0.5 - 2, height * 0.5 - 10, 4, 20);
+  ctx.fillRect(width * 0.5 - 10, height * 0.5 - 2, 20, 4);
+}
+
+function updatePlayer() {
+  const forward = (keys.w || keys['arrowup'] ? 1 : 0) - (keys.s || keys['arrowdown'] ? 1 : 0);
+  const strafe = (keys.d || keys['arrowright'] ? 1 : 0) - (keys.a || keys['arrowleft'] ? 1 : 0);
+  const turn = (keys['arrowleft'] || keys.a ? -1 : 0) + (keys['arrowright'] || keys.d ? 1 : 0);
+
+  player.angle += turn * 0.045;
+
+  const forwardX = Math.cos(player.angle) * forward * player.speed * 0.035;
+  const forwardY = Math.sin(player.angle) * forward * player.speed * 0.035;
+  const sideX = Math.cos(player.angle + Math.PI / 2) * strafe * player.speed * 0.035;
+  const sideY = Math.sin(player.angle + Math.PI / 2) * strafe * player.speed * 0.035;
+
+  const nextX = player.x + forwardX + sideX;
+  const nextY = player.y + forwardY + sideY;
+
+  if (getCell(nextX, player.y) === 0) player.x = nextX;
+  if (getCell(player.x, nextY) === 0) player.y = nextY;
+}
+
+function loop() {
+  updatePlayer();
+  render();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('keydown', (event) => {
+  const key = event.key.toLowerCase();
+  keys[key] = true;
+  if (event.key === ' ') event.preventDefault();
 });
 
-const ambientLight = new THREE.AmbientLight(0xd8dde2, 0.5);
-scene.add(ambientLight);
-
-
-// =============================================
-// CONTROLES DO SLIDER DA ÁGUA
-// =============================================
-
-function setupWaterControls() {
-    const slider = document.getElementById('nivel-slider');
-    const fill = document.getElementById('slider-fill');
-    const thumb = document.getElementById('slider-thumb');
-    const tooltip = document.getElementById('slider-tooltip');
-
-    if (!slider) return;
-
-    function updateWaterUI() {
-        const minVal = parseFloat(slider.min) || 0;
-        const maxVal = parseFloat(slider.max) || 0.2;
-        const rawVal = parseFloat(slider.value) || 0;
-
-        const percent = Math.min(Math.max((rawVal - minVal) / (maxVal - minVal), 0), 1) * 100;
-        const meters = Math.round(rawVal / SCALE_FACTOR);
-
-        if (fill) fill.style.width = `${percent}%`;
-        if (thumb) thumb.style.left = `${percent}%`;
-        if (tooltip) {
-            tooltip.style.left = `${percent}%`;
-            tooltip.textContent = `${meters} m`;
-        }
-
-        if (water?.setWaterLevel) {
-            water.setWaterLevel(meters);
-        }
-    }
-
-    slider.addEventListener('input', updateWaterUI);
-    slider.addEventListener('change', updateWaterUI);
-    slider.value = waterLevelInicial * SCALE_FACTOR;
-    updateWaterUI();
-}
-
-
-// =============================================
-// ATALHOS DO TECLADO
-// =============================================
-
-function setupKeyboardControls() {
-    window.addEventListener('keydown', event => {
-        const tecla = event.key.toLowerCase();
-
-        if (tecla === 'f') iniciarCameraEmPOIAleatorio();
-        if (tecla === 'h') alternarInterface();
-        if (tecla === 'r') alternarRetro();
-        if (tecla === '1') alternarHidrografia();
-        if (tecla === '5') alternarVegetacao();
-        if (tecla === '0') {
-            retroAtivo = true;
-            hidrografiaAtiva = true;
-            vegetacaoAtiva = true;
-
-            retroPass.enabled = true;
-            if (hydrography) hydrography.visible = true;
-            if (vegetation) vegetation.visible = true;
-
-            atualizarEstadoBotao(toggleRetroButton, true);
-            atualizarEstadoBotao(toggleHydroButton, true);
-            atualizarEstadoBotao(toggleVegetationButton, true);
-        }
-    });
-}
-
-
-// =============================================
-// INICIALIZAÇÃO DA CENA
-// =============================================
-
-async function initScene() {
-    try {
-        elevationData = await loadElevationData('/V4_1_-48.48_-27.59.tif');
-
-        if (elevationData) {
-            setElevationData(elevationData);
-            initProjection(elevationData.bbox);
-        }
-    } catch (error) {
-        console.error('Erro ao carregar elevação:', error);
-    }
-
-    const loaders = [
-        {
-            fn: async () => createTerrain(elevationData),
-            name: 'terreno'
-        },
-        {
-            fn: async () => {
-                hydrography = await loadHydrography('/assets/data/hidrografia.geojson', { yOffset: 0.01 });
-                return hydrography;
-            },
-            name: 'hidrografia'
-        },
-        {
-            fn: async () => loadBuildings('/assets/data/edificacoes.geojson', { color: 0xa8a090 }),
-            name: 'edificações'
-        },
-        {
-            fn: async () => {
-                vegetation = await createVegetation(
-                    '/assets/data/vegetacao_real.geojson',
-                    [
-                        '/assets/models/arvore1.glb',
-                        '/assets/models/arvore2.glb',
-                        '/assets/models/arbusto.glb'
-                    ]
-                );
-                return vegetation;
-            },
-            name: 'vegetação'
-        }
-    ];
-
-    for (const loader of loaders) {
-        try {
-            const object = await loader.fn();
-            if (object) scene.add(object);
-        } catch (error) {
-            console.error(`Erro ao carregar ${loader.name}:`, error);
-        }
-    }
-
-    try {
-        pois = createPOIs() || [];
-        pois.forEach(poi => scene.add(poi));
-    } catch (error) {
-        console.warn('Erro nos POIs:', error);
-    }
-
-    setupWater();
-    setupWaterControls();
-    setupKeyboardControls();
-
-    iniciarCameraEmPOIAleatorio();
-}
-
-
-// =============================================
-// ÁGUA
-// =============================================
-
-function setupWater() {
-    const sizeX = 10;
-    const bbox = elevationData?.bbox;
-
-    const sizeZ = bbox
-        ? sizeX * ((bbox[3] - bbox[1]) / (bbox[2] - bbox[0]))
-        : 10;
-
-    water = createWater(elevationData, {
-        initialLevelMeters: waterLevelInicial,
-        sizeX,
-        sizeZ,
-        fogColor: 0xb8c4d0,
-        scaleFactor: SCALE_FACTOR
-    });
-
-    if (water?.mesh) scene.add(water.mesh);
-}
-
-
-// =============================================
-// POSICIONAMENTO DA CÂMERA
-// =============================================
-
-function fitCameraToScene() {
-    camera.position.set(16, 16, 16);
-    controls.target.set(0, 0, 0);
-    controls.update();
-}
-
-function obterPosicaoDoPOI(poi) {
-    if (!poi) return null;
-
-    if (poi.isObject3D && poi.position) {
-        scene.updateMatrixWorld(true);
-        return poi.getWorldPosition(new THREE.Vector3());
-    }
-
-    if (poi.position && typeof poi.position.x === 'number') {
-        return new THREE.Vector3(poi.position.x, poi.position.y, poi.position.z);
-    }
-
-    if (poi.userData?.position && typeof poi.userData.position.x === 'number') {
-        return new THREE.Vector3(
-            poi.userData.position.x,
-            poi.userData.position.y || 0,
-            poi.userData.position.z
-        );
-    }
-
-    if (typeof poi.x === 'number') {
-        return new THREE.Vector3(poi.x, poi.y, poi.z);
-    }
-
-    return null;
-}
-
-function obterPOIsComPosicao() {
-    return pois.filter(poi => obterPosicaoDoPOI(poi) !== null);
-}
-
-function iniciarCameraEmPOIAleatorio() {
-    const poisValidos = obterPOIsComPosicao();
-
-    if (poisValidos.length === 0) {
-        fitCameraToScene();
-        return;
-    }
-
-    const indiceAleatorio = Math.floor(Math.random() * poisValidos.length);
-    const poi = poisValidos[indiceAleatorio];
-    const posicaoPOI = obterPosicaoDoPOI(poi);
-
-    if (!posicaoPOI) {
-        fitCameraToScene();
-        return;
-    }
-
-    const deslocamentoCamera = new THREE.Vector3(5, 4, 5);
-    camera.position.copy(posicaoPOI).add(deslocamentoCamera);
-    controls.target.copy(posicaoPOI);
-    controls.update();
-}
-
-Object.assign(window, {
-    scene,
-    camera,
-    controls,
-    retroPass,
-    ambientLight,
-    renderer,
-    get water() { return water; },
-    get vegetation() { return vegetation; }
+window.addEventListener('keyup', (event) => {
+  const key = event.key.toLowerCase();
+  keys[key] = false;
 });
 
-
-// =============================================
-// LOOP DE ANIMAÇÃO
-// =============================================
-
-function animate(time) {
-    requestAnimationFrame(animate);
-
-    const seconds = time * 0.001;
-
-    pois.forEach(poi => {
-        if (poi.visible && poi.userData?.update) {
-            poi.userData.update(seconds);
-        }
-    });
-
-    if (sky) sky.position.copy(camera.position);
-    if (water?.updateTime) water.updateTime(seconds);
-
-    controls.update();
-    composer.render();
-}
-
-
-// =============================================
-// REDIMENSIONAMENTO
-// =============================================
-
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    composer.setSize(window.innerWidth, window.innerHeight);
-
-    retroPass.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
-
-    if (typeof onHydrographyResize === 'function') {
-        onHydrographyResize();
-    }
+window.addEventListener('mousemove', (event) => {
+  if (document.pointerLockElement !== canvas) return;
+  const sensitivity = 0.0024;
+  player.angle -= event.movementX * sensitivity;
 });
 
+canvas.addEventListener('click', () => {
+  canvas.requestPointerLock?.();
+});
 
-// =============================================
-// INICIAR
-// =============================================
-
-initScene()
-    .then(() => {
-        console.log('[OK] Cena inicializada com sucesso!');
-        animate(0);
-    })
-    .catch(error => {
-        console.error('Erro fatal ao inicializar a cena:', error);
-    });
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+bindToTerrainData();
+requestAnimationFrame(loop);
