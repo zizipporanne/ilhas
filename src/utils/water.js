@@ -53,74 +53,14 @@ export function createWater(elevationData, opts = {}) {
     uFogFar:           { value: fogFar }
   };
 
-  const material = new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader: `
-      uniform float uSizeX;
-      uniform float uSizeZ;
-      varying vec3 vWorldPos;
-      varying vec2 vDemUV;
-
-      void main() {
-        vec4 worldPos = modelMatrix * vec4(position, 1.0);
-        vWorldPos = worldPos.xyz;
-        
-        vDemUV = vec2(
-          0.5 - worldPos.x / uSizeX,
-          worldPos.z / uSizeZ + 0.5
-        );
-        
-        gl_Position = projectionMatrix * viewMatrix * worldPos;
-      }
-    `,
-    fragmentShader: `
-      uniform float uTime;
-      uniform sampler2D uDemTex;
-      uniform float uWaterLevel;
-      uniform vec3 uWaterDeep;
-      uniform vec3 uWaterMid;
-      uniform vec3 uWaterShallow;
-      uniform vec3 uWaterVeryShallow;
-      uniform vec3 uFogColor;
-      uniform float uFogNear;
-      uniform float uFogFar;
-
-      varying vec3 vWorldPos;
-      varying vec2 vDemUV;
-
-      void main() {
-        float inside = step(0.0, vDemUV.x) * step(vDemUV.x, 1.0) *
-                       step(0.0, vDemUV.y) * step(vDemUV.y, 1.0);
-
-        float terrainH = texture2D(uDemTex, vDemUV).r;
-        float depth = mix(100.0, uWaterLevel - terrainH, inside);
-
-        float t1 = step(2.0, depth);
-        float t2 = step(8.0, depth);
-        float t3 = step(30.0, depth);
-
-        vec3 col = mix(uWaterVeryShallow, uWaterShallow, t1);
-        col = mix(col, uWaterMid, t2);
-        col = mix(col, uWaterDeep, t3);
-
-        vec2 tileUV = vWorldPos.xz * 0.6;
-        float wave = sin(tileUV.x + uTime * 0.4)
-                   + sin(tileUV.y + uTime * 0.3)
-                   + sin((tileUV.x + tileUV.y) * 0.5 + uTime * 0.5);
-        wave = floor((wave / 3.0) * 4.0 + 0.5) * 0.25;
-
-        col += wave * 0.015;
-
-        float dist = distance(cameraPosition, vWorldPos);
-        float fogFactor = smoothstep(uFogNear, uFogFar, dist);
-        
-gl\_FragColor = vec4(mix(col, uFogColor, fogFactor), 1.0); gl\_FragColor = vec4(col, 1.0)      }
-    `,
-    transparent: false,
-    depthWrite: true,
-    depthTest: true,
-    side: THREE.DoubleSide,
-    fog: false
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x4aa7d8,
+    transparent: true,
+    opacity: 0.9,
+    emissive: 0x123a57,
+    roughness: 0.25,
+    metalness: 0.1,
+    side: THREE.DoubleSide
   });
 
   const planeW = sizeX * 3.0;

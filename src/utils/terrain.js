@@ -119,7 +119,7 @@ export function createTerrain(elevationData = null) {
   const propZ = bbox ? bbox[3] - bbox[1] : 1;
   const sizeZ = bbox ? (sizeX * (propZ / propX)) : 10;
 
-  const segments = 300;
+  const segments = 180;
   const geometry = new THREE.BufferGeometry();
   
   const vertexCount = (segments + 1) * (segments + 1);

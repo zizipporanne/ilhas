@@ -3,11 +3,11 @@ import * as THREE from 'three';
 export const PixelShader = {
     uniforms: {
         tDiffuse: { value: null },
-        pixelSize: { value: 2.0 },
-        colorDepth: { value: 22.0 },
-        brightness: { value: 5.0 },
-        contrast: { value: 1.15 },
-        outlineStrength: { value: 0.45 },
+        pixelSize: { value: 1.5 },
+        colorDepth: { value: 32.0 },
+        brightness: { value: 1.15 },
+        contrast: { value: 1.05 },
+        outlineStrength: { value: 0.08 },
         resolution: { value: new THREE.Vector2() }
     },
     vertexShader: `
