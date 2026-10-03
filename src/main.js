@@ -5,7 +5,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
-import { RetroShader } from './utils/retroShader.js';
+import { PixelShader } from './utils/pixelShader.js';
 
 import {
     createTerrain,
@@ -56,10 +56,11 @@ const composer = new EffectComposer(renderer);
 const renderPass = new RenderPass(scene, camera);
 composer.addPass(renderPass);
 
-const retroPass = new ShaderPass(RetroShader);
+const retroPass = new ShaderPass(PixelShader);
 retroPass.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
-retroPass.uniforms.pixelSize.value = 0.5;
+retroPass.uniforms.pixelSize.value = 2.0;
 retroPass.uniforms.colorDepth.value = 22.0;
+retroPass.uniforms.outlineStrength.value = 0.45;
 retroPass.enabled = true;
 composer.addPass(retroPass);
 
