@@ -78,8 +78,8 @@ export async function createVegetation(vegetationDataPath, modelPaths = []) {
 
       dummy.position.set(pt.x, y, pt.z);
 
-      // Aplica escala/variação leve para evitar padronização mecânica
-      const scale = (pt.density || 1.0) * (0.8 + Math.random() * 0.4);
+      // Reduz o tamanho geral da vegetação para evitar que ela domine o terreno.
+      const scale = (pt.density || 1.0) * 0.45 * (0.7 + Math.random() * 0.3);
       dummy.scale.set(scale, scale, scale);
 
       const q = new THREE.Quaternion().setFromUnitVectors(upVector, normal);
