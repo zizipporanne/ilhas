@@ -74,12 +74,22 @@ async function bindToTerrainData() {
 
   player.x = terrainWorld.center.x;
   player.y = terrainWorld.center.y;
-  player.groundHeight = sample.getHeight(player.x, player.y, terrainWorld.width, terrainWorld.depth);
+  player.groundHeight = sample.getHeight(
+    player.x - terrainWorld.width / 2,
+    player.y - terrainWorld.depth / 2,
+    terrainWorld.width,
+    terrainWorld.depth
+  );
 }
 
 function currentGroundHeight() {
   if (!terrainWorld.sample) return 0;
-  return terrainWorld.sample.getHeight(player.x, player.y, terrainWorld.width, terrainWorld.depth);
+  return terrainWorld.sample.getHeight(
+    player.x - terrainWorld.width / 2,
+    player.y - terrainWorld.depth / 2,
+    terrainWorld.width,
+    terrainWorld.depth
+  );
 }
 
 const keys = {};
