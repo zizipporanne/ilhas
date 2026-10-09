@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { getHeight, getTerrainNormal } from './terrain.js';
+import { getHeight, getTerrainNormal } from '../../../src/utils/terrain.js';
 import { projectToWorld } from './hydrography.js';
 
 /**

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SimplexNoise } from './noise.js';
+import { SimplexNoise } from '../../../src/utils/noise.js';
 
 let cachedElevationData = null;
 const SCALE_FACTOR = 0.0007;
@@ -63,43 +63,29 @@ function smoothNoise(x, y) {
   return a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v;
 }
 
-function generatePaintedTexture(elevationData) {
-  const w = elevationData.width, h = elevationData.height;
-  const data = elevationData.data;
-  
-  const canvas = typeof OffscreenCanvas !== 'undefined'
-    ? new OffscreenCanvas(w, h)
-    : document.createElement('canvas');
-  
-  if (canvas.width !== w) canvas.width = w;
-  if (canvas.height !== h) canvas.height = h;
-
+function generatePaintedTextureFallback(segments) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
   const ctx = canvas.getContext('2d');
-  const img = ctx.createImageData(w, h);
+  const img = ctx.createImageData(512, 512);
   const buf = img.data;
 
-  const BRUSH_SCALE = 0.20;
-  const WASH_SCALE = 0.04;
+  const noise = new SimplexNoise();
 
-  for (let row = 0; row < h; row++) {
-    for (let col = 0; col < w; col++) {
-      const idx = row * w + col;
-      const elev = data[idx];
-      let [r, g, b] = colorForElevation(elev);
+  for (let row = 0; row < 512; row++) {
+    for (let col = 0; col < 512; col++) {
+      const x = (col / 512 - 0.5) * 10;
+      const z = (row / 512 - 0.5) * 24;
+      
+      let h = noise.noise2D(x * 0.3, z * 0.3) * 100;
+      let [r, g, b] = colorForElevation(h);
 
-      const brush = smoothNoise(col * BRUSH_SCALE, row * BRUSH_SCALE) * 0.025;
-      const wash  = smoothNoise(col * WASH_SCALE,  row * WASH_SCALE)  * 0.04;
-
-      const v = brush + wash;
-      r = Math.max(0, Math.min(1, r + v));
-      g = Math.max(0, Math.min(1, g + v));
-      b = Math.max(0, Math.min(1, b + v));
-
-      const px = idx * 4;
-      buf[px]     = (r * 255) | 0;
-      buf[px + 1] = (g * 255) | 0;
-      buf[px + 2] = (b * 255) | 0;
-      buf[px + 3] = 255;
+      const idx = (row * 512 + col) * 4;
+      buf[idx]     = (r * 255) | 0;
+      buf[idx + 1] = (g * 255) | 0;
+      buf[idx + 2] = (b * 255) | 0;
+      buf[idx + 3] = 255;
     }
   }
   ctx.putImageData(img, 0, 0);
@@ -107,18 +93,12 @@ function generatePaintedTexture(elevationData) {
 }
 
 export function createTerrain(elevationData = null) {
-  if (elevationData) {
+  if (elevationData && elevationData.data) {
     setElevationData(elevationData);
   }
 
-  const noise = new SimplexNoise();
-
   const sizeX = 10;
-  const bbox = elevationData ? elevationData.bbox : null;
-  const propX = bbox ? bbox[2] - bbox[0] : 1;
-  const propZ = bbox ? bbox[3] - bbox[1] : 1;
-  const sizeZ = bbox ? (sizeX * (propZ / propX)) : 10;
-
+  const sizeZ = 24; 
   const segments = 180;
   const geometry = new THREE.BufferGeometry();
   
@@ -134,13 +114,7 @@ export function createTerrain(elevationData = null) {
       const x = sizeX / 2 - (i / segments) * sizeX;
       const z = -sizeZ / 2 + (j / segments) * sizeZ;
 
-      let height;
-      if (elevationData && typeof elevationData.getHeight === 'function') {
-        height = elevationData.getHeight(x, z, sizeX, sizeZ) * SCALE_FACTOR;
-      } else {
-        height = noise.noise2D(x * 0.3, z * 0.3) * 1.2;
-        height += noise.noise2D(x * 0.6 + 10, z * 0.6 + 10) * 0.48;
-      }
+      const height = getHeight(x, z);
 
       vertices[vIdx++] = x;
       vertices[vIdx++] = height;
@@ -172,48 +146,33 @@ export function createTerrain(elevationData = null) {
   const group = new THREE.Group();
   group.name = 'terrain';
 
-  let topMaterial;
-  if (elevationData) {
-    const canvas = generatePaintedTexture(elevationData);
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.minFilter = THREE.LinearMipmapLinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.anisotropy = 8;
-    texture.needsUpdate = true;
+  const canvas = generatePaintedTextureFallback(segments);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
 
-    topMaterial = new THREE.MeshLambertMaterial({
-      map: texture,
-      flatShading: false,
-      side: THREE.DoubleSide
-    });
-  } else {
-    topMaterial = new THREE.MeshLambertMaterial({
-      color: 0x3a6039,
-      flatShading: false,
-      side: THREE.DoubleSide
-    });
-  }
+  const topMaterial = new THREE.MeshLambertMaterial({
+    map: texture,
+    flatShading: false,
+    side: THREE.DoubleSide
+  });
 
   const topMesh = new THREE.Mesh(geometry, topMaterial);
   topMesh.receiveShadow = true;
   topMesh.castShadow = true;
   group.add(topMesh);
 
+  // VÍNCULO GLOBAL DO MAPA
+  window.terreno3DInstanciado = group; 
+
   return group;
 }
 
 export function getHeight(x, z) {
-  if (cachedElevationData && typeof cachedElevationData.getHeight === 'function') {
-    const bbox = cachedElevationData.bbox;
-    const sizeX = 10;
-    const sizeZ = sizeX * ((bbox[3] - bbox[1]) / (bbox[2] - bbox[0]));
-    return cachedElevationData.getHeight(x, z, sizeX, sizeZ) * SCALE_FACTOR;
-  }
   const noise = new SimplexNoise();
-  let h = noise.noise2D(x * 0.3, z * 0.3) * 1.2;
-  h += noise.noise2D(x * 0.6 + 10, z * 0.6 + 10) * 0.48;
-  return h;
+  let h = noise.noise2D(x * 0.2, z * 0.2) * 1.5;
+  h += noise.noise2D(x * 0.5 + 5, z * 0.5 + 5) * 0.4;
+  return Math.max(-0.5, h);
 }
 
 export function getTerrainNormal(x, z, eps = 0.05) {

@@ -1,120 +1,130 @@
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { loadElevationData } from './utils/elevationLoader.js';
-import { createTerrain, getHeight } from './utils/terrain.js';
-import { PopulationSystem } from './utils/population.js';
+import { SocialSimulation2D } from './SocialSimulation2D.js';
+import { SporeCreature } from './sporefunctions/SporeCreature.js';
 
-// 1. Cena, Câmera e Renderizador para Terreno Aberto
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb);
+let canvas, simulation;
+let criaturas = [];
+let comidas = [];
+let geracao = 1;
+let tempoGeracaoCounter = 0;
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
-camera.position.set(0, 15, 30);
+const TAMANHO_POPULACAO = 25;
+const DURACAO_GERACAO = 600; 
+const MAP_COLS = 120;
+const MAP_ROWS = 260;
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+async function startApp() {
+  canvas = document.querySelector('#simulationCanvas');
+  if (!canvas) return console.error('Canvas não encontrado.');
 
-renderer.domElement.style.position = 'fixed';
-renderer.domElement.style.top = '0';
-renderer.domElement.style.left = '0';
-renderer.domElement.style.width = '100vw';
-renderer.domElement.style.height = '100vh';
-renderer.domElement.style.zIndex = '1';
-document.body.style.margin = '0';
-document.body.style.overflow = 'hidden';
-document.body.appendChild(renderer.domElement);
+  simulation = new SocialSimulation2D(canvas, MAP_COLS, MAP_ROWS);
+  simulation.isReady = true;
+  simulation.populateProportional();
 
-// 2. Painel UI HUD (Informações da População)
-const hud = document.createElement('div');
-hud.id = 'population-hud';
-hud.style.position = 'fixed';
-hud.style.top = '20px';
-hud.style.left = '20px';
-hud.style.padding = '15px 20px';
-hud.style.background = 'rgba(15, 23, 42, 0.8)';
-hud.style.color = '#e2e8f0';
-hud.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-hud.style.fontSize = '13px';
-hud.style.borderRadius = '10px';
-hud.style.backdropFilter = 'blur(8px)';
-hud.style.border = '1px solid rgba(255, 255, 255, 0.1)';
-hud.style.zIndex = '10';
-hud.style.boxShadow = '0 10px 25px -5px rgba(0, 0, 0, 0.4)';
-hud.innerHTML = `<div style="font-weight: 600; color: #38bdf8; font-size: 14px;">📊 Carregando População...</div>`;
-document.body.appendChild(hud);
+  const width = canvas.width || 800;
+  const height = canvas.height || 600;
 
-// 3. Controles Livres de Câmera
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.05;
+  // Inicializa as criaturas espalhadas no Canvas
+  for (let i = 0; i < TAMANHO_POPULACAO; i++) {
+    criaturas.push(new SporeCreature(Math.random() * width, Math.random() * height));
+  }
+  
+  // CORREÇÃO: Nome unificado da função de comida
+  gerarComidaPlana(width, height, 50);
 
-// 4. Luzes do Ambiente Externo
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-scene.add(ambientLight);
+  function loop() {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return requestAnimationFrame(loop);
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-dirLight.position.set(50, 100, 50);
-scene.add(dirLight);
+    // Limpa a tela a cada quadro para sumir com os rastros de cobrinha
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-let population = null;
-let frameCount = 0;
+    // 1. Roda e renderiza o mapa isométrico nativo de Florianópolis no fundo
+    try { 
+      simulation.update(); 
+      simulation.render(); 
+    } catch(e) {}
 
-// 5. Carrega o Terreno Real e inicializa a simulação
-async function init() {
-    try {
-        console.log('🌍 Carregando dados de elevação reais...');
-        const elevationData = await loadElevationData('./V4_1_-48.48_-27.59.tif');
-        
-        if (elevationData) {
-            const terrainMesh = createTerrain(elevationData);
-            scene.add(terrainMesh);
-            console.log('✅ Terreno real carregado com sucesso!');
-        } else {
-            console.warn('⚠️ Usando terreno padrão (fallback)');
-            const terrainMesh = createTerrain();
-            scene.add(terrainMesh);
-        }
-
-        population = new PopulationSystem(scene, 1000, 8, 20);
-
-    } catch (e) {
-        console.error('Erro ao inicializar terreno:', e);
+    // 2. Repõe alimentos dinamicamente se estiver acabando
+    if (comidas.filter(c => !c.isDead).length < 15) {
+      gerarComidaPlana(canvas.width, canvas.height, 20);
     }
-}
+    comidas = comidas.filter(c => !c.isDead);
+    
+    // 3. Atualiza e desenha as criaturas individuais deslizando por cima do mapa
+    criaturas.forEach(criatura => {
+      criatura.update(comidas, criaturas, canvas.width, canvas.height);
+      criatura.draw(ctx);
+    });
 
-init();
+    comidas.forEach(comida => {
+      ctx.save();
+      ctx.fillStyle = '#2ecc71'; 
+      ctx.beginPath();
+      ctx.arc(comida.x, comida.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
 
-// 6. Loop de Animação
-function animate() {
-    requestAnimationFrame(animate);
-
-    if (population) {
-        population.update((x, z) => getHeight(x, z));
-
-        // Atualiza a UI a cada 15 quadros para evitar gargalo de DOM
-        frameCount++;
-        if (frameCount % 15 === 0) {
-            const stats = population.getStats();
-            hud.innerHTML = `
-                <div style="font-weight: 600; margin-bottom: 8px; color: #38bdf8; font-size: 14px; letter-spacing: 0.5px;">📊 PAINEL DA POPULAÇÃO</div>
-                <div style="margin-bottom: 4px;">👥 Total de Agentes: <b style="color: #fff;">${stats.count}</b></div>
-                <div style="margin-bottom: 4px;">⛰️ Elevação Média: <b style="color: #fff;">${stats.avgHeight}m</b></div>
-                <div style="margin-bottom: 4px;">📈 Ponto Mais Alto: <b style="color: #fff;">${stats.maxHeight}m</b></div>
-                <div>📉 Ponto Mais Baixo: <b style="color: #fff;">${stats.minHeight}m</b></div>
-            `;
-        }
+    // Avanço do Relógio do Algoritmo Genético
+    tempoGeracaoCounter++;
+    if (tempoGeracaoCounter >= DURACAO_GERACAO) {
+      tempoGeracaoCounter = 0;
+      geracao++;
+      criaturas = evoluirPopulacaoPlana(criaturas, TAMANHO_POPULACAO, canvas.width, canvas.height);
+      comidas = [];
+      gerarComidaPlana(canvas.width, canvas.height, 50);
     }
 
-    controls.update();
-    renderer.render(scene, camera);
+    // Painel HUD Superior Integrado
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+    ctx.fillRect(20, 20, 260, 65);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.strokeRect(20, 20, 260, 65);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(`Mundo Evolutivo Spore`, 35, 40);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(`Geração: ${geracao} | Próxima era: ${Math.max(0, Math.ceil((DURACAO_GERACAO - tempoGeracaoCounter) / 60))}s`, 35, 58);
+    ctx.restore();
+
+    requestAnimationFrame(loop);
+  }
+
+  loop();
 }
 
-animate();
+// CORREÇÃO: Nome grafado corretamente com "g" para bater com a chamada
+function gerarComidaPlana(w, h, quantidade) {
+  for (let i = 0; i < quantidade; i++) {
+    comidas.push({ x: Math.random() * w, y: Math.random() * h, isDead: false });
+  }
+}
 
-// Ajuste de Janela Responsivo
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
+function evoluirPopulacaoPlana(populacaoAntiga, tamanho, w, h) {
+  const sobreviventes = populacaoAntiga.sort((a, b) => b.score - a.score);
+  const elite = sobreviventes.slice(0, Math.max(2, Math.floor(tamanho * 0.25)));
+  const novaPop = [];
+
+  for (let i = 0; i < tamanho; i++) {
+    const p = elite[Math.floor(Math.random() * elite.length)];
+    const m = elite[Math.floor(Math.random() * elite.length)];
+    const dna = {
+      velocidade: Math.random() > 0.5 ? p.dna.velocidade : m.dna.velocidade,
+      raioVisao: Math.random() > 0.5 ? p.dna.raioVisao : m.dna.raioVisao,
+      tamanho: Math.random() > 0.5 ? p.dna.tamanho : m.dna.tamanho,
+      tipoBoca: Math.random() > 0.4 ? p.dna.tipoBoca : m.dna.tipoBoca,
+      cor: Math.random() > 0.5 ? p.dna.cor : m.dna.cor
+    };
+
+    if (Math.random() < 0.15) {
+      dna.velocidade = Math.max(1.2, Math.min(3.8, dna.velocidade + (Math.random() - 0.5) * 0.8));
+      dna.raioVisao = Math.max(40, Math.min(150, dna.raioVisao + (Math.random() - 0.5) * 20));
+      dna.tamanho = Math.max(3, Math.min(9, dna.tamanho + (Math.random() - 0.5) * 2));
+    }
+    novaPop.push(new SporeCreature(Math.random() * w, Math.random() * h, null, dna));
+  }
+  return novaPop;
+}
+
+window.addEventListener('DOMContentLoaded', startApp);
